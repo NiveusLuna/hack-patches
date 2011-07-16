@@ -1,0 +1,39 @@
+diff -ruN yum-utils-1.1.18.old/plugins/fastestmirror/fastestmirror.py yum-utils-1.1.18/plugins/fastestmirror/fastestmirror.py
+--- yum-utils-1.1.18.old/plugins/fastestmirror/fastestmirror.py	2008-12-25 16:45:42.000000000 +0800
++++ yum-utils-1.1.18/plugins/fastestmirror/fastestmirror.py	2008-12-25 16:46:30.000000000 +0800
+@@ -45,6 +45,7 @@
+ import urlparse
+ import datetime
+ import threading
++import urllib2
+ 
+ from yum.plugins import TYPE_CORE
+ 
+@@ -464,15 +465,19 @@
+                 if self.host in ("127.0.0.1", "::1", "localhost"):
+                     result = 0
+                 else:
+-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+-                    uPort = string.find(self.host,":")
+-                    if uPort > 0:
+-                        self.port = int(self.host[uPort+1:])
+-                        self.host = self.host[:uPort]
++                    headers = {'Pragma': 'no-cache',
++                    'Cache-Control': 'no-cache'   }
++
++                    url = "%s/repodata/repomd.xml" % self.mirror
++                    request = urllib2.Request(url, None, headers)
+                     time_before = time.time()
+-                    sock.connect((self.host, self.port))
+-                    result = time.time() - time_before
+-                    sock.close()
++                    usock = urllib2.urlopen(request)
++                    fsize =  len(usock.read())
++                    elapsed = time.time() - time_before
++                    result = (elapsed*10000) / fsize
++                    if verbose:
++                       print "Timed %s (score: %.1f)" % (self.host,fsize/elapsed/1024.0)
++
+             self.parent._add_result(self.mirror, self.host, result)
+         except:
+             if verbose:

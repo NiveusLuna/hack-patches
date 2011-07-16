@@ -1,0 +1,124 @@
+diff --git a/extensions/dock/extension.js b/extensions/dock/extension.js
+index 8af0d3e..faa71d8 100644
+--- a/extensions/dock/extension.js
++++ b/extensions/dock/extension.js
+@@ -25,7 +25,7 @@ const AltTab = imports.ui.altTab;
+ const Gettext = imports.gettext.domain('gnome-shell-extensions');
+ const _ = Gettext.gettext;
+ 
+-const DOCKICON_SIZE = 48;
++const DOCKICON_SIZE = 30;
+ const DND_RAISE_APP_TIMEOUT = 500;
+ 
+ function Dock() {
+@@ -91,6 +91,7 @@ Dock.prototype = {
+         let icons = 0;
+ 
+         let nFavorites = 0;
++
+         for (let id in favorites) {
+             let app = favorites[id];
+             let display = new DockIcon(app);
+@@ -120,7 +121,8 @@ Dock.prototype = {
+         let primary = global.get_primary_monitor();
+         let height = (icons)*(this._item_size + this._spacing) + 2*this._spacing;
+         this.actor.set_size(this._item_size + 4*this._spacing, height);
+-        this.actor.set_position(primary.width-this._item_size-this._spacing-2, (primary.height-height)/2);
++//        this.actor.set_position(primary.width-this._item_size-this._spacing-2, (primary.height-height)/2);
++        this.actor.set_position(-this._spacing-2, (primary.height-height)/2);
+     },
+ 
+     _getPreferredWidth: function (grid, forHeight, alloc) {
+@@ -235,6 +237,7 @@ DockIcon.prototype = {
+             this._has_focus = false;
+         else
+             this._has_focus = true;
++
+         return false;
+     },
+ 
+@@ -289,6 +292,7 @@ DockIcon.prototype = {
+         this._removeMenuTimeout();
+         this.actor.fake_release();
+ 
++
+         if (!this._menu) {
+             this._menu = new DockIconMenu(this);
+             this._menu.connect('activate-window', Lang.bind(this, function (menu, window) {
+@@ -302,7 +306,11 @@ DockIcon.prototype = {
+             this._menuManager.addMenu(this._menu, true);
+         }
+ 
+-        this._menu.popup();
++        if (!this._menu.isOpen) {
++            this._menu.popup();
++        } else {
++            this._menu.close(true);
++        }
+ 
+         return false;
+     },
+@@ -343,13 +351,14 @@ DockIcon.prototype = {
+             let focusedApp = tracker.focus_app;
+ 
+             if (this.app == focusedApp) {
+-                let windows = this.app.get_windows();
++                this.popupMenu();
++/*                let windows = this.app.get_windows();
+                 let current_workspace = global.screen.get_active_workspace();
+                 for (let i = 0; i < windows.length; i++) {
+                     let w = windows[i];
+                     if (w.get_workspace() == current_workspace)
+                         w.minimize();
+-                }
++                }*/
+             } else {
+                 this.app.activate(-1);
+             }
+@@ -371,7 +380,7 @@ DockIconMenu.prototype = {
+     __proto__: AppDisplay.AppIconMenu.prototype,
+ 
+     _init: function(source) {
+-        PopupMenu.PopupMenu.prototype._init.call(this, source.actor, St.Align.MIDDLE, St.Side.RIGHT, 0);
++        PopupMenu.PopupMenu.prototype._init.call(this, source.actor, St.Align.MIDDLE, St.Side.LEFT, 0);
+ 
+         this._source = source;
+ 
+@@ -400,6 +409,10 @@ DockIconMenu.prototype = {
+         let activeWorkspace = global.screen.get_active_workspace();
+         let separatorShown = windows.length > 0 && windows[0].get_workspace() != activeWorkspace;
+ 
++        this._newWindowMenuItem = windows.length > 0 ? this._appendMenuItem(_("New Window")) : null;
++        this._launchAppItem = windows.length == 0 ? this._appendMenuItem(_("Launch Application")) : null;
++        this._appendSeparator();
++
+         for (let i = 0; i < windows.length; i++) {
+             if (!separatorShown && windows[i].get_workspace() != activeWorkspace) {
+                 this._appendSeparator();
+@@ -414,15 +427,14 @@ DockIconMenu.prototype = {
+ 
+         let isFavorite = AppFavorites.getAppFavorites().isFavorite(this._source.app.get_id());
+ 
+-        this._newWindowMenuItem = windows.length > 0 ? this._appendMenuItem(_("New Window")) : null;
+ 
+-        this._quitAppMenuItem = windows.length >0 ? this._appendMenuItem(_("Quit Application")) : null;
++/*        this._quitAppMenuItem = windows.length >0 ? this._appendMenuItem(_("Quit Application")) : null;
+ 
+         if (windows.length > 0)
+             this._appendSeparator();
+         this._toggleFavoriteMenuItem = this._appendMenuItem(isFavorite ?
+                                                             _("Remove from Favorites")
+-                                                            : _("Add to Favorites"));
++                                                            : _("Add to Favorites"));*/
+ 
+         this._highlightedItem = null;
+     },
+@@ -431,6 +443,8 @@ DockIconMenu.prototype = {
+         if (child._window) {
+             let metaWindow = child._window;
+             this.emit('activate-window', metaWindow);
++        } else if (child == this._launchAppItem) {
++            this._source.app.activate(-1);
+         } else if (child == this._newWindowMenuItem) {
+             let current_workspace = global.screen.get_active_workspace().index();
+             this._source.app.open_new_window(current_workspace);

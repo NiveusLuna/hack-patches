@@ -1,0 +1,339 @@
+#!/bin/bash
+# set -ex
+
+DISTRO="fedora-12"
+CACHE="/var/cache/lxc/${DISTRO}"
+
+# Default container name
+NAME="fedora"
+CONFFILE="lxc.conf"
+MNTFILE="mount.conf"
+UTSNAME=
+MTU="1500"
+
+# These paths are within the container so do not need to obey configure prefixes
+FSTAB="/etc/fstab"
+
+################################################################################
+#                    DISTRO custom configuration files
+################################################################################
+
+# custom selinux
+
+write_distro_selinux() {
+    mkdir -p ${ROOTFS}/selinux
+    echo 0 > ${ROOTFS}/selinux/enforce
+}
+
+# custom fstab
+
+write_distro_fstab() {
+cat <<EOF > ${ROOTFS}/${FSTAB}
+tmpfs  /dev/shm   tmpfs  defaults  0 0
+none /dev/pts devpts defaults 0 0
+EOF
+}
+
+# custom network configuration
+write_distro_network() {
+cat <<EOF > ${ROOTFS}/etc/sysconfig/network-scripts/ifcfg-eth0
+DEVICE=eth0
+BOOTPROTO=dhcp
+ONBOOT=yes
+HOSTNAME=${UTSNAME}
+NM_CONTROLLED=no
+TYPE=Ethernet
+MTU=${MTU}
+EOF
+}
+
+# custom hostname
+
+write_distro_hostname() {
+cat <<EOF > ${ROOTFS}/etc/sysconfig/network
+NETWORKING=yes
+HOSTNAME=${UTSNAME}
+EOF
+}
+
+################################################################################
+#                        lxc configuration files
+################################################################################
+
+write_lxc_configuration() {
+cat <<EOF > ${CONFFILE}
+lxc.utsname = ${UTSNAME}
+lxc.tty = 4
+lxc.network.type = veth
+lxc.network.flags = up
+lxc.network.link = virbr0
+lxc.network.name = eth0
+lxc.network.mtu = ${MTU}
+lxc.mount = ${MNTFILE}
+lxc.rootfs = ${ROOTFS}
+lxc.cgroup.devices.deny = a
+# /dev/null and zero
+lxc.cgroup.devices.allow = c 1:3 rwm
+lxc.cgroup.devices.allow = c 1:5 rwm
+# consoles
+lxc.cgroup.devices.allow = c 5:1 rwm
+lxc.cgroup.devices.allow = c 5:0 rwm
+lxc.cgroup.devices.allow = c 4:0 rwm
+lxc.cgroup.devices.allow = c 4:1 rwm
+# /dev/{,u}random
+lxc.cgroup.devices.allow = c 1:9 rwm
+lxc.cgroup.devices.allow = c 1:8 rwm
+# /dev/pts/* - pts namespaces are "coming soon"
+lxc.cgroup.devices.allow = c 136:* rwm
+lxc.cgroup.devices.allow = c 5:2 rwm
+# rtc
+lxc.cgroup.devices.allow = c 254:0 rwm
+EOF
+}
+
+write_lxc_mounts() {
+cat <<EOF > ${MNTFILE}
+
+EOF
+}
+
+post_config_distro() {
+sed -i 's|.sbin.start_udev||' ${ROOTFS}/etc/rc.sysinit
+sed -i 's|.sbin.start_udev||' ${ROOTFS}/etc/rc.d/rc.sysinit
+chroot ${ROOTFS} chkconfig udev-post off
+chroot ${ROOTFS} chkconfig auditd off
+chroot ${ROOTFS} chkconfig network on
+chroot ${ROOTFS} passwd 
+}
+
+write_distro_devd() {
+# taken from http://blog.bodhizazen.net/linux/lxc-configure-fedora-containers/
+ROOTFSDEV="${ROOTFS}/dev"
+rm -rf ${ROOTFSDEV}/
+mkdir ${ROOTFSDEV}
+mknod -m 666 ${ROOTFSDEV}/null c 1 3
+mknod -m 666 ${ROOTFSDEV}/zero c 1 5
+mknod -m 666 ${ROOTFSDEV}/random c 1 8
+mknod -m 666 ${ROOTFSDEV}/urandom c 1 9
+mkdir -m 755 ${ROOTFSDEV}/pts
+mkdir -m 1777 ${ROOTFSDEV}/shm
+mknod -m 666 ${ROOTFSDEV}/tty c 5 0
+mknod -m 666 ${ROOTFSDEV}/tty0 c 4 0
+mknod -m 666 ${ROOTFSDEV}/tty1 c 4 1
+mknod -m 666 ${ROOTFSDEV}/tty2 c 4 2
+mknod -m 666 ${ROOTFSDEV}/tty3 c 4 3
+mknod -m 666 ${ROOTFSDEV}/tty4 c 4 4
+mknod -m 600 ${ROOTFSDEV}/console c 5 1
+mknod -m 666 ${ROOTFSDEV}/full c 1 7
+mknod -m 600 ${ROOTFSDEV}/initctl p
+mknod -m 666 ${ROOTFSDEV}/ptmx c 5 2
+
+}
+
+create() {
+
+    # choose a container name, default is already in shell NAME variable
+    echo -n "What is the name for the container ? [${NAME}] "
+    read _NAME_
+
+    if [ ! -z "${_NAME_}" ]; then
+	NAME=${_NAME_}
+    fi
+
+    # choose a hostname, default is the container name
+    echo -n "What hostname do you wish for this container ? [${NAME}] "
+    read _UTSNAME_
+
+    if [ ! -z "${_UTSNAME_}" ]; then
+	UTSNAME=${_UTSNAME_}
+    else
+	UTSNAME=${NAME}
+    fi
+
+    # choose the MTU size
+    echo -n "What is the MTU size ? [$MTU] "
+    read _MTU_
+
+    if [ ! -z "$_MTU_" ]; then
+	MTU=$_MTU_
+    fi
+
+    # the rootfs name will be build with the container name
+    ROOTFS="/var/lib/lxc/rootfs/${NAME}"
+
+    # check if the rootfs does already exist
+    if [ ! -e "${ROOTFS}" ]; then
+	    mkdir -p /var/lock/subsys/
+	(
+	    flock -n -x 200
+
+
+	    RES=$?
+	    if [ "${RES}" != "0" ]; then
+		echo "Cache repository is busy."
+		break
+	    fi
+
+	    # check the mini distro was not already downloaded
+	    echo -n "Checking cache download ..."
+	    if [ ! -e "${CACHE}/rootfs" ]; then
+
+		echo "not cached"
+		echo "Bootstrapping ${DISTRO}"
+                febootstrap ${DISTRO} ${CACHE}/partial
+
+		RESULT=$?
+		if [ "${RESULT}" != "0" ]; then
+		    echo "Failed to download the rootfs, aborting."
+		    exit 1
+		fi
+		mv "${CACHE}/partial" "${CACHE}/rootfs"
+		echo "Download complete."
+	    else
+		echo "Found."
+	    fi
+
+            # make a local copy of the mini
+	    echo -n "Copying rootfs ..."
+            if [ ! -e "/var/lib/lxc/rootfs" ];then
+               mkdir -p /var/lib/lxc/rootfs
+            fi
+	    cp -a ${CACHE}/rootfs ${ROOTFS} && echo "Done." || exit
+	) 200> "/var/lock/subsys/lxc"
+    fi
+
+write_lxc_mounts
+
+write_lxc_configuration
+
+write_distro_hostname
+
+write_distro_fstab
+
+write_distro_network
+
+write_distro_selinux
+
+write_distro_devd
+
+post_config_distro
+
+/usr/bin/lxc-create -n ${NAME} -f ${CONFFILE}
+RES=$?
+
+# remove the configuration files
+rm -f ${CONFFILE}
+rm -f ${MNTFILE}
+
+if [ "${RES}" != "0" ]; then
+    echo "Failed to create '${NAME}'"
+    exit 1
+fi
+
+echo "Done."
+echo -e "\nYou can run your container with the 'lxc-start -n ${NAME}'\n"
+}
+
+destroy() {
+
+    echo -n "What is the name for the container ? [${NAME}] "
+    read _NAME_
+
+    if [ ! -z "${_NAME_}" ]; then
+	NAME=${_NAME_}
+    fi
+
+    /usr/bin/lxc-destroy -n ${NAME}
+    RETVAL=$?
+    if [ ! ${RETVAL} -eq 0 ]; then
+	echo "Failed to destroyed '${NAME}'"
+	return ${RETVAL}
+    fi
+
+    ROOTFS="/var/lib/lxc/rootfs/${NAME}"
+
+    echo -n "Shall I remove the rootfs [y/n] ? "
+    read
+    if [ "${REPLY}" = "y" ]; then
+	rm -rf ${ROOTFS}
+    fi
+
+    return 0
+}
+
+help() {
+    cat <<EOF
+
+This script is a helper to create ${DISTRO} system containers.
+
+The script will create the container configuration file following
+the informations submitted interactively with 'lxc-${DISTRO} create'
+
+The first creation will download, with yum, a ${DISTRO} minimal
+install and store it into a cache.
+
+The script will copy from the cache the root filesystem to the
+current directory.
+
+If there is a problem with the container, (bad configuration for
+example), you can destroy the container with 'lxc-${DISTRO} destroy'
+but without removing the rootfs and recreate it again with
+'lxc-${DISTRO} create'.
+
+If you want to create another ${DISTRO} container, call the 'lxc-${DISTRO}
+ create' again, specifying another name and new parameters.
+
+At any time you can purge the ${DISTRO} cache download by calling
+'lxc-${DISTRO} purge'
+
+Have fun :)
+
+EOF
+}
+
+purge() {
+
+    if [ ! -e ${CACHE} ]; then
+	exit 0
+    fi
+
+    # lock, so we won't purge while someone is creating a repository
+    (
+	flock -n -x 200
+
+	RES=$?
+	if [ "${RES}" != "0" ]; then
+	    echo "Cache repository is busy."
+	    exit 1
+	fi
+
+	echo -n "Purging the download cache..."
+	rm --preserve-root --one-file-system -rf ${CACHE} && echo "Done." || exit 1
+	exit 0
+
+    ) 200> "/var/lock/subsys/lxc"
+}
+
+# Note: assuming uid==0 is root -- might break with userns??
+if [ "$(id -u)" != "0" ]; then
+	echo "This script should be run as 'root'"
+	exit 1
+fi
+
+# Detect which executable we were run as, lxc-fedora or lxc-redhat
+CACHE="/var/cache/lxc/${DISTRO}"
+mkdir -p ${CACHE}
+
+case "$1" in
+    create)
+	create;;
+    destroy)
+	destroy;;
+    help)
+	help;;
+    purge)
+	purge;;
+    *)
+	echo "Usage: $0 {create|destroy|purge|help}"
+
+esac
