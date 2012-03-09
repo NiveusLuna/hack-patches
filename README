@@ -1,16 +1,17 @@
 To use the fastestmirror patch:
 
 1) download yum-plugin-timemirrorbandwidth/timemirrorbandwidth.py
-2) place it in /usr/lib/yum-plugins/
-3) create /etc/yum/pluginconf.d/timemirrorbandwidth.conf
-4) edit the conf file above to have:
+2) If you are on a current version of Fedora or on EL6+, edit the required api version to 2.6
+3) place it in /usr/lib/yum-plugins/
+4) create /etc/yum/pluginconf.d/timemirrorbandwidth.conf
+5) edit the conf file above to have:
 [main]
 enabled=1
 
-5) It's now installed. To use, execute:
+6) It's now installed. To use, execute:
 yum time-mirrors --disableplugin=fastestmirror
 
 This will start scoring the available mirrors and add the fastest three for each repo into fastestmirror.conf's include_only list. It will not run every time you use yum because of extreme slowdown.
 
-6) Enjoy!
+7) Enjoy!
 
